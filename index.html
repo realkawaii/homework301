@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大吉國中 301 電子聯絡簿</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // 更新為 301 班的 Firebase 配置
+        const firebaseConfig = {
+            apiKey: "AIzaSyC5PNHdlGqBngfFQw9j48PDOsuUE0Co1yc",
+            authDomain: "homework301-6336d.firebaseapp.com",
+            projectId: "homework301-6336d",
+            storageBucket: "homework301-6336d.firebasestorage.app",
+            messagingSenderId: "1059953743338",
+            appId: "1:1059953743338:web:8001bad91ca8d2cb04ce93",
+            measurementId: "G-61HWWZW6PQ"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // 更新 301 班學生名單
+        const students = [
+            {id:1, name:"何育駿"}, {id:2, name:"何松澤"}, {id:3, name:"吳承叡"}, 
+            {id:4, name:"吳進和"}, {id:5, name:"劉亞嶧"}, {id:6, name:"蔡宗叡"}, 
+            {id:7, name:"蔡玝緷"}, {id:8, name:"蔡柏昱"}, {id:9, name:"鍾富程"}, 
+            {id:10, name:"顏崇凱"}, {id:12, name:"李玉琪"}, {id:13, name:"杜任婕"}, 
+            {id:14, name:"林妍豫"}, {id:15, name:"陳韋汝"}, {id:16, name:"廖意菲"}, 
+            {id:17, name:"蔡瑜嫙"}, {id:18, name:"鄭湘蓉"}, {id:19, name:"簡苡安"}, 
+            {id:21, name:"江秉軒"}
+        ];
+        
+        const sel = document.getElementById('student-sel');
+        students.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = `${s.id}. ${s.name}`;
+            sel.appendChild(opt);
+        });
+
+        const canvas = document.getElementById('canvas');
+        const pad = new SignaturePad(canvas);
+
+        function getFormattedDate() {
+            const now = new Date();
+            const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+            return `${now.toLocaleDateString('zh-TW')} ${days[now.getDay()]}`;
+        }
+
+        onSnapshot(doc(db, "configs", "today_homework"), (docSnap) => {
+            if (docSnap.exists()) {
+                document.getElementById('hw-content').innerText = docSnap.data().content;
+                document.getElementById('hw-date').innerText = docSnap.data().date || getFormattedDate();
+            }
+        });
+
+        window.updateHW = async () => {
+            const val = document.getElementById('hw-input').value;
+            if(!val) return alert("請輸入內容");
+            const oldContent = document.getElementById('hw-content').innerText;
+            const oldDate = document.getElementById('hw-date').innerText;
+            try {
+                await addDoc(collection(db, "history_homework"), {
+                    date: oldDate,
+                    content: oldContent,
+                    timestamp: Date.now()
+                });
+                await setDoc(doc(db, "configs", "today_homework"), {
+                    content: val,
+                    date: getFormattedDate()
+                });
+                document.getElementById('hw-input').value = '';
+                alert("黑板已成功更新！");
+            } catch(e) { alert("更新失敗"); }
+        };
+
+        window.saveData = async () => {
+            const sid = sel.value;
+            if(!sid || pad.isEmpty()) return alert("請選取座號並簽名");
+            try {
+                await addDoc(collection(db, "signatures"), {
+                    sid: sid,
+                    name: students.find(s => s.id == sid).name,
+                    comment: document.getElementById('comment').value,
+                    sig: pad.toDataURL(),
+                    time: new Date().toLocaleTimeString(),
+                    timestamp: Date.now()
+                });
+                alert("儲存成功！");
+                pad.clear();
+            } catch(e) { alert("儲存失敗"); }
+        };
+
+        let isHistoryShow = false;
+        window.toggleHistory = () => {
+            const box = document.getElementById('history-box');
+            isHistoryShow = !isHistoryShow;
+            if (isHistoryShow) {
+                const q = query(collection(db, "history_homework"), orderBy("timestamp", "desc"));
+                onSnapshot(q, (snapshot) => {
+                    box.innerHTML = snapshot.docs.map(d => `<div class="hist-item"><b>${d.data().date}</b><br>${d.data().content}</div>`).join('');
+                });
+                box.style.display = 'block';
+            } else {
+                box.style.display = 'none';
+            }
+        };
+
+        window.loginAdmin = () => {
+            const pw = prompt("請輸入管理密碼：");
+            const adminPanel = document.getElementById('admin-panel');
+            const teacherExtra = document.getElementById('teacher-extra');
+
+            if (pw === "2211") { // 老師密碼更新
+                adminPanel.style.display = 'block';
+                teacherExtra.style.display = 'block';
+                initAdminListeners();
+                adminPanel.scrollIntoView({ behavior: 'smooth' });
+            } else if (pw === "12321") { // 學生密碼更新
+                adminPanel.style.display = 'block';
+                teacherExtra.style.display = 'none';
+                adminPanel.scrollIntoView({ behavior: 'smooth' });
+            } else {
+                alert("密碼錯誤！");
+            }
+        };
+
+        function initAdminListeners() {
+            onSnapshot(query(collection(db, "history_homework"), orderBy("timestamp", "desc")), (snap) => {
+                document.getElementById('admin-history-manage').innerHTML = snap.docs.map(d => `
+                    <div class="edit-card">
+                        <small>${d.data().date}</small>
+                        <textarea id="edit-${d.id}" style="width:100%; margin:5px 0;">${d.data().content}</textarea>
+                        <button onclick="window.saveEditHW('${d.id}')">儲存修改</button>
+                        <button onclick="window.deleteHW('${d.id}')" style="color:red;">刪除</button>
+                    </div>
+                `).join('');
+            });
+            onSnapshot(query(collection(db, "signatures"), orderBy("timestamp", "desc")), (snap) => {
+                const records = snap.docs.map(d => d.data());
+                const signedIds = records.map(r => parseInt(r.sid));
+                const unsigned = students.filter(s => !signedIds.includes(s.id));
+                document.getElementById('stats-area').innerHTML = `<div style="background:#fff1f1; padding:10px; border-radius:4px;">未簽名：${unsigned.length > 0 ? unsigned.map(s => s.name).join('、') : '全班已完成'}</div>`;
+                document.getElementById('records-list').innerHTML = snap.docs.map(d => `
+                    <div class="record-card">
+                        <b>${d.data().sid}. ${d.data().name} (${d.data().time})</b><br>
+                        留言：${d.data().comment || '無'}<br>
+                        <img src="${d.data().sig}" style="width:100%; border:1px solid #eee; background:#fff;">
+                        <button onclick="window.deleteSig('${d.id}')" style="color:red; background:none; border:none; cursor:pointer;">[刪除紀錄]</button>
+                    </div>
+                `).join('');
+            });
+        }
+
+        window.saveEditHW = async (id) => {
+            const newContent = document.getElementById(`edit-${id}`).value;
+            await updateDoc(doc(db, "history_homework", id), { content: newContent });
+            alert("已修正");
+        };
+        window.deleteHW = async (id) => {
+            if(confirm("確定刪除？")) await deleteDoc(doc(db, "history_homework", id));
+        };
+        window.deleteSig = async (id) => {
+            if(confirm("確定刪除簽名？")) await deleteDoc(doc(db, "signatures", id));
+        };
+
+        function resizeCanvas() {
+            const ratio = Math.max(window.devicePixelRatio || 1, 1);
+            canvas.width = canvas.offsetWidth * ratio;
+            canvas.height = canvas.offsetHeight * ratio;
+            canvas.getContext("2d").scale(ratio, ratio);
+            pad.clear();
+        }
+        window.onresize = resizeCanvas;
+        resizeCanvas();
+    </script>
+
+    <style>
+        :root { --muji-bg: #f2f0eb; --blackboard-green: #2c4c3e; --chalk-white: #fdfdfd; --muji-charcoal: #333333; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: var(--muji-bg); color: var(--muji-charcoal); margin: 0; padding: 15px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .header-section { text-align: center; margin-bottom: 25px; }
+        .school-info, .main-title { font-size: 2em; font-weight: 700; display: block; line-height: 1.4; }
+        .blackboard { background-color: var(--blackboard-green); border: 12px solid #5d4037; border-radius: 4px; padding: 20px; text-align: center; }
+        .bb-title { color: #ffd54f; font-size: 1.8em; font-weight: 700; margin-bottom: 5px; }
+        .bb-date { color: rgba(255,255,255,0.8); font-size: 1.1em; margin-bottom: 15px; border-bottom: 1px dashed rgba(255,255,255,0.3); padding-bottom: 10px; }
+        .homework-content { color: var(--chalk-white); font-size: 1.4em; line-height: 1.8; white-space: pre-wrap; min-height: 100px; text-align: left; }
+        .btn { background-color: var(--muji-charcoal); color: white; border: none; padding: 18px; cursor: pointer; width: 100%; font-size: 20px; border-radius: 6px; font-weight: 700; }
+        .btn-history { background: none; border: 2px solid #888; color: #888; font-size: 16px; margin-top: 5px; height: 50px; }
+        #history-box { display: none; padding: 15px; background: #f0f0f0; margin-top: 10px; border-radius: 4px; border: 1px solid #ddd; }
+        .hist-item { border-bottom: 1px solid #ccc; padding: 10px 0; }
+        .admin-area { display: none; margin-top: 40px; padding: 20px; background: #eef2f3; border-radius: 8px; border: 2px solid #ccc; }
+        .record-card, .edit-card { background: white; border: 1px solid #bbb; padding: 15px; margin-bottom: 10px; border-radius: 4px; }
+        .sig-wrapper { border: 2px solid var(--muji-charcoal); background: #fff; border-radius: 6px; }
+        canvas { width: 100%; height: 350px; touch-action: none; display: block; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header-section">
+        <span class="school-info">大吉國中 三年一班</span>
+        <span class="main-title">電子聯絡簿</span>
+    </div>
+    <div class="blackboard">
+        <div class="bb-title">今日功課</div>
+        <div class="bb-date" id="hw-date">載入中...</div>
+        <div id="hw-content" class="homework-content">載入中...</div>
+    </div>
+    <button class="btn btn-history" onclick="toggleHistory()">📂 查看之前功課 (展開/收起)</button>
+    <div id="history-box"></div>
+    <div style="font-size: 1.3em; font-weight: 700; border-left: 6px solid #333; padding-left: 12px; margin: 25px 0 15px 0;">家長簽名</div>
+    <div style="margin-bottom:20px;"><label style="font-weight:700;">1. 選擇學生</label><select id="student-sel" style="width:100%; padding:14px; font-size:18px;"><option value="">請點擊選擇座號姓名</option></select></div>
+    <div style="margin-bottom:20px;"><label style="font-weight:700;">2. 想對老師說的話</label><textarea id="comment" rows="2" style="width:100%; padding:14px; font-size:18px;"></textarea></div>
+    <div style="margin-bottom:20px;"><label style="font-weight:700;">3. 家長簽名</label><div class="sig-wrapper"><canvas id="canvas"></canvas></div><button onclick="pad.clear()" style="width:100%; padding:10px; background:none; border:none; text-decoration:underline; color:#666; cursor:pointer;">清除重簽</button></div>
+    <button class="btn" onclick="saveData()">確認儲存並送出</button>
+
+    <button onclick="loginAdmin()" style="margin-top:100px; opacity:0.1; background:none; border:none; width:100%;">管理</button>
+    <div id="admin-panel" class="admin-area">
+        <h3>管理後台</h3>
+        <div style="margin-bottom:20px;">
+            <label>發布新功課</label>
+            <textarea id="hw-input" rows="3" style="width:100%; padding:10px;"></textarea>
+            <button class="btn" style="background:#444;" onclick="updateHW()">更新黑板內容</button>
+        </div>
+        <div id="teacher-extra">
+            <hr>
+            <h4>管理歷史功課</h4>
+            <div id="admin-history-manage"></div>
+            <h4>今日簽名統計</h4>
+            <div id="stats-area"></div>
+            <div id="records-list"></div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
