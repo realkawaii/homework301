@@ -11,7 +11,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Firebase 配置 (使用您提供的 301 專案金鑰，僅修改顯示名稱)
+        // Firebase 配置
         const firebaseConfig = {
             apiKey: "AIzaSyC5PNHdlGqBngfFQw9j48PDOsuUE0Co1yc",
             authDomain: "homework301-6336d.firebaseapp.com",
@@ -53,6 +53,43 @@
             return `${now.toLocaleDateString('zh-TW')} ${days[now.getDay()]}`;
         }
 
+        // --- 核心邏輯：判斷目前應統計的區間 ---
+        function getStatisticsRange() {
+            const now = new Date();
+            const day = now.getDay(); 
+            let start = new Date(now);
+            let end = new Date(now);
+            const setTime = (d, h) => { d.setHours(h, 0, 0, 0); return d.getTime(); };
+
+            // 週五 16:00 ~ 週一 07:00 的週末窗口
+            const isWeekendWindow = (day === 5 && now.getHours() >= 16) || 
+                                    (day === 6) || 
+                                    (day === 0) || 
+                                    (day === 1 && now.getHours() < 7);
+
+            if (isWeekendWindow) {
+                if (day === 5) { start = setTime(start, 16); }
+                else if (day === 6) { start.setDate(start.getDate() - 1); start = setTime(start, 16); }
+                else if (day === 0) { start.setDate(start.getDate() - 2); start = setTime(start, 16); }
+                else if (day === 1) { start.setDate(start.getDate() - 3); start = setTime(start, 16); }
+                
+                const monday = new Date(start);
+                monday.setDate(start.getDate() + 3);
+                end = setTime(monday, 7);
+            } else {
+                // 平日時段：16:00 到 隔日 07:00
+                if (now.getHours() >= 16) { 
+                    start = setTime(start, 16);
+                    end.setDate(end.getDate() + 1); end = setTime(end, 7);
+                } else {
+                    // 包含 00:00~07:00 (算昨天下午開始的統計) 以及 07:00~16:00 (顯示最近一次結果)
+                    start.setDate(start.getDate() - 1); start = setTime(start, 16);
+                    end = setTime(new Date(now), 7);
+                }
+            }
+            return { start, end };
+        }
+
         onSnapshot(doc(db, "configs", "today_homework"), (docSnap) => {
             if (docSnap.exists()) {
                 document.getElementById('hw-content').innerText = docSnap.data().content;
@@ -89,7 +126,7 @@
                     name: students.find(s => s.id == sid).name,
                     comment: document.getElementById('comment').value,
                     sig: pad.toDataURL(),
-                    time: new Date().toLocaleTimeString(),
+                    time: new Date().toLocaleString('zh-TW'),
                     timestamp: Date.now()
                 });
                 alert("儲存成功！");
@@ -117,12 +154,12 @@
             const adminPanel = document.getElementById('admin-panel');
             const teacherExtra = document.getElementById('teacher-extra');
 
-            if (pw === "2211") { // 老師密碼
+            if (pw === "2211") {
                 adminPanel.style.display = 'block';
                 teacherExtra.style.display = 'block';
                 initAdminListeners();
                 adminPanel.scrollIntoView({ behavior: 'smooth' });
-            } else if (pw === "12321") { // 學生密碼
+            } else if (pw === "12321") {
                 adminPanel.style.display = 'block';
                 teacherExtra.style.display = 'none';
                 adminPanel.scrollIntoView({ behavior: 'smooth' });
@@ -142,19 +179,39 @@
                     </div>
                 `).join('');
             });
+
             onSnapshot(query(collection(db, "signatures"), orderBy("timestamp", "desc")), (snap) => {
-                const records = snap.docs.map(d => d.data());
-                const signedIds = records.map(r => parseInt(r.sid));
+                const range = getStatisticsRange();
+                const allDocs = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                
+                // 1. 統計區域：嚴格過濾時段
+                const statsRecords = allDocs.filter(r => r.timestamp >= range.start && r.timestamp < range.end);
+                const signedIds = statsRecords.map(r => parseInt(r.sid));
                 const unsigned = students.filter(s => !signedIds.includes(s.id));
-                document.getElementById('stats-area').innerHTML = `<div style="background:#fff1f1; padding:10px; border-radius:4px;">未簽名：${unsigned.length > 0 ? unsigned.map(s => s.name).join('、') : '全班已完成'}</div>`;
-                document.getElementById('records-list').innerHTML = snap.docs.map(d => `
-                    <div class="record-card">
-                        <b>${d.data().sid}. ${d.data().name} (${d.data().time})</b><br>
-                        留言：${d.data().comment || '無'}<br>
-                        <img src="${d.data().sig}" style="width:100%; border:1px solid #eee; background:#fff;">
-                        <button onclick="window.deleteSig('${d.id}')" style="color:red; background:none; border:none; cursor:pointer;">[刪除紀錄]</button>
+
+                const rangeText = `${new Date(range.start).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'})} 起`;
+                
+                document.getElementById('stats-area').innerHTML = `
+                    <div style="background:#e3f2fd; padding:10px; border-radius:4px; margin-bottom:10px; font-size:0.85em; border-left:4px solid #2196F3;">
+                        <b>目前統計時段：</b> ${rangeText}
                     </div>
-                `).join('');
+                    <div style="background:#fff1f1; padding:10px; border-radius:4px; border-left:4px solid #f44336;">
+                        <b>時段內未簽名 (${unsigned.length}人)：</b><br>
+                        ${unsigned.length > 0 ? unsigned.map(s => s.name).join('、') : '✨ 全班已完成簽名'}
+                    </div>`;
+
+                // 2. 顯示清單：完整保留（不加過濾）
+                document.getElementById('records-list').innerHTML = allDocs.map(d => {
+                    const isOutside = (d.timestamp < range.start || d.timestamp >= range.end);
+                    return `
+                    <div class="record-card" style="${isOutside ? 'opacity:0.6; border-style:dashed;' : ''}">
+                        <b>${d.sid}. ${d.name}</b> ${isOutside ? '<small style="color:#999;">[非本次統計區間]</small>' : ''}<br>
+                        <small style="color:#888;">${d.time}</small><br>
+                        留言：${d.comment || '無'}<br>
+                        <img src="${d.sig}" style="width:100%; border:1px solid #eee; background:#fff; margin-top:5px;">
+                        <button onclick="window.deleteSig('${d.id}')" style="color:red; background:none; border:none; cursor:pointer; font-size:12px;">[刪除紀錄]</button>
+                    </div>`;
+                }).join('');
             });
         }
 
@@ -233,8 +290,9 @@
             <hr>
             <h4>管理歷史功課</h4>
             <div id="admin-history-manage"></div>
-            <h4>今日簽名統計</h4>
+            <h4>家長簽名統計</h4>
             <div id="stats-area"></div>
+            <h4 style="margin-top:20px;">完整歷史簽名紀錄 (含留言)</h4>
             <div id="records-list"></div>
         </div>
     </div>
