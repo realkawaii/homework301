@@ -9,9 +9,9 @@
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Firebase 配置
+        // Firebase 配置 (保留 303 班設定)
         const firebaseConfig = {
             apiKey: "AIzaSyC5PNHdlGqBngfFQw9j48PDOsuUE0Co1yc",
             authDomain: "homework301-6336d.firebaseapp.com",
@@ -25,7 +25,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // 303 班學生名單
+        // 303 班學生名單 (保留)
         const students = [
             {id:1, name:"何育駿"}, {id:2, name:"何松澤"}, {id:3, name:"吳承叡"}, 
             {id:4, name:"吳進和"}, {id:5, name:"劉亞嶧"}, {id:6, name:"蔡宗叡"}, 
@@ -53,7 +53,7 @@
             return `${now.toLocaleDateString('zh-TW')} ${days[now.getDay()]}`;
         }
 
-        // --- 核心邏輯：判斷目前應統計的區間 ---
+        // --- 核心邏輯：判斷目前應統計的區間 (更新為 204 版本) ---
         function getStatisticsRange() {
             const now = new Date();
             const day = now.getDay(); 
@@ -61,30 +61,27 @@
             let end = new Date(now);
             const setTime = (d, h) => { d.setHours(h, 0, 0, 0); return d.getTime(); };
 
-            // 週五 16:00 ~ 週一 07:00 的週末窗口
-            const isWeekendWindow = (day === 5 && now.getHours() >= 16) || 
-                                    (day === 6) || 
-                                    (day === 0) || 
-                                    (day === 1 && now.getHours() < 7);
+            // 判斷是否為週五下午4點到週一中午12點的區間
+            const isWeekendWindow = (day === 5 && now.getHours() >= 16) || (day === 6) || (day === 0) || (day === 1 && now.getHours() < 12);
 
             if (isWeekendWindow) {
-                if (day === 5) { start = setTime(start, 16); }
+                if (day === 5) start = setTime(start, 16);
                 else if (day === 6) { start.setDate(start.getDate() - 1); start = setTime(start, 16); }
                 else if (day === 0) { start.setDate(start.getDate() - 2); start = setTime(start, 16); }
                 else if (day === 1) { start.setDate(start.getDate() - 3); start = setTime(start, 16); }
-                
-                const monday = new Date(start);
-                monday.setDate(start.getDate() + 3);
-                end = setTime(monday, 7);
+                end = new Date(start); 
+                end.setDate(start.getDate() + 3); // 指向週一
+                end = setTime(end, 12);           // 截止時間週一 12:00
             } else {
-                // 平日時段：16:00 到 隔日 07:00
+                // 平日時段：下午4點到隔天中午12點
                 if (now.getHours() >= 16) { 
                     start = setTime(start, 16);
-                    end.setDate(end.getDate() + 1); end = setTime(end, 7);
+                    end.setDate(end.getDate() + 1); 
+                    end = setTime(end, 12);
                 } else {
-                    // 包含 00:00~07:00 (算昨天下午開始的統計) 以及 07:00~16:00 (顯示最近一次結果)
-                    start.setDate(start.getDate() - 1); start = setTime(start, 16);
-                    end = setTime(new Date(now), 7);
+                    start.setDate(start.getDate() - 1); 
+                    start = setTime(start, 16);
+                    end = setTime(new Date(now), 12);
                 }
             }
             return { start, end };
@@ -131,6 +128,7 @@
                 });
                 alert("儲存成功！");
                 pad.clear();
+                document.getElementById('comment').value = '';
             } catch(e) { alert("儲存失敗"); }
         };
 
@@ -168,6 +166,7 @@
             }
         };
 
+        // --- 管理者監聽功能 (更新為 204 版本) ---
         function initAdminListeners() {
             onSnapshot(query(collection(db, "history_homework"), orderBy("timestamp", "desc")), (snap) => {
                 document.getElementById('admin-history-manage').innerHTML = snap.docs.map(d => `
@@ -182,38 +181,80 @@
 
             onSnapshot(query(collection(db, "signatures"), orderBy("timestamp", "desc")), (snap) => {
                 const range = getStatisticsRange();
-                const allDocs = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                const allData = snap.docs.map(d => ({id: d.id, ...d.data()}));
                 
                 // 1. 統計區域：嚴格過濾時段
-                const statsRecords = allDocs.filter(r => r.timestamp >= range.start && r.timestamp < range.end);
+                const statsRecords = allData.filter(r => r.timestamp >= range.start && r.timestamp < range.end);
                 const signedIds = statsRecords.map(r => parseInt(r.sid));
                 const unsigned = students.filter(s => !signedIds.includes(s.id));
 
-                const rangeText = `${new Date(range.start).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'})} 起`;
-                
                 document.getElementById('stats-area').innerHTML = `
-                    <div style="background:#e3f2fd; padding:10px; border-radius:4px; margin-bottom:10px; font-size:0.85em; border-left:4px solid #2196F3;">
-                        <b>目前統計時段：</b> ${rangeText}
+                    <div style="background:#e3f2fd; padding:15px; border-radius:8px; margin-bottom:15px; border-left:5px solid #2196F3;">
+                        <b style="color:#1565C0;">📊 統計時段：</b><br>
+                        ${new Date(range.start).toLocaleString()} ~ ${new Date(range.end).toLocaleString()}
                     </div>
-                    <div style="background:#fff1f1; padding:10px; border-radius:4px; border-left:4px solid #f44336;">
-                        <b>時段內未簽名 (${unsigned.length}人)：</b><br>
-                        ${unsigned.length > 0 ? unsigned.map(s => s.name).join('、') : '✨ 全班已完成簽名'}
+                    <div style="background:#fff1f1; padding:15px; border-radius:8px; border-left:5px solid #f44336;">
+                        <b style="color:#c62828;">❌ 本時段未簽名 (${unsigned.length}人)：</b><br>
+                        <p style="margin-top:8px; font-size:1.1em;">${unsigned.length > 0 ? unsigned.map(s => s.name).join('、') : '✨ 全班已簽名'}</p>
                     </div>`;
 
-                // 2. 顯示清單：完整保留（不加過濾）
-                document.getElementById('records-list').innerHTML = allDocs.map(d => {
+                // 2. 批量刪除控制區
+                const batchControlHTML = `
+                    <div style="margin-bottom: 10px; padding: 10px; background: #eee; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                        <label style="cursor:pointer; display:flex; align-items:center; gap:5px; margin:0;">
+                            <input type="checkbox" id="selectAllSigs" onchange="window.toggleAllSigs(this)" style="transform: scale(1.3);"> 
+                            全選
+                        </label>
+                        <button onclick="window.deleteSelectedSigs()" style="background: #d32f2f; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">🗑️ 刪除選取項目</button>
+                    </div>
+                `;
+
+                // 3. 顯示清單
+                const listHTML = allData.map(d => {
                     const isOutside = (d.timestamp < range.start || d.timestamp >= range.end);
                     return `
-                    <div class="record-card" style="${isOutside ? 'opacity:0.6; border-style:dashed;' : ''}">
-                        <b>${d.sid}. ${d.name}</b> ${isOutside ? '<small style="color:#999;">[非本次統計區間]</small>' : ''}<br>
+                    <div class="record-card" style="${isOutside ? 'opacity:0.6; border-style:dashed; background:#fafafa;' : 'border-left:4px solid #4caf50;'}">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <b>${d.sid}. ${d.name}</b>
+                            <input type="checkbox" class="sig-checkbox" value="${d.id}" style="transform: scale(1.5); cursor: pointer;">
+                        </div>
+                        ${isOutside ? '<span style="color:#999; font-size:0.8em;">[非本次統計]</span><br>' : ''}
                         <small style="color:#888;">${d.time}</small><br>
-                        留言：${d.comment || '無'}<br>
+                        <div style="margin:5px 0; color:#444;">留言：${d.comment || '無'}</div>
                         <img src="${d.sig}" style="width:100%; border:1px solid #eee; background:#fff; margin-top:5px;">
-                        <button onclick="window.deleteSig('${d.id}')" style="color:red; background:none; border:none; cursor:pointer; font-size:12px;">[刪除紀錄]</button>
+                        <div style="text-align:right; margin-top:5px;">
+                            <button onclick="window.deleteSig('${d.id}')" style="color:#666; background:none; border:none; cursor:pointer; font-size:12px; text-decoration:underline;">個別刪除</button>
+                        </div>
                     </div>`;
                 }).join('');
+
+                document.getElementById('records-list').innerHTML = batchControlHTML + listHTML;
             });
         }
+
+        // --- 批量操作功能 ---
+        window.toggleAllSigs = (source) => {
+            const checkboxes = document.querySelectorAll('.sig-checkbox');
+            checkboxes.forEach(cb => cb.checked = source.checked);
+        };
+
+        window.deleteSelectedSigs = async () => {
+            const checkedBoxes = document.querySelectorAll('.sig-checkbox:checked');
+            if (checkedBoxes.length === 0) return alert("請先選取要刪除的項目");
+            
+            if (!confirm(`⚠️ 確定要永久刪除選取的 ${checkedBoxes.length} 筆簽名嗎？\n此動作無法復原！`)) return;
+
+            try {
+                // 使用 Promise.all 平行刪除
+                const deletePromises = Array.from(checkedBoxes).map(cb => deleteDoc(doc(db, "signatures", cb.value)));
+                await Promise.all(deletePromises);
+                alert("刪除成功！");
+                const selectAllBox = document.getElementById('selectAllSigs');
+                if(selectAllBox) selectAllBox.checked = false;
+            } catch (e) {
+                alert("刪除失敗：" + e.message);
+            }
+        };
 
         window.saveEditHW = async (id) => {
             const newContent = document.getElementById(`edit-${id}`).value;
@@ -235,7 +276,8 @@
             pad.clear();
         }
         window.onresize = resizeCanvas;
-        resizeCanvas();
+        // 延遲執行以確保容器渲染
+        setTimeout(resizeCanvas, 500);
     </script>
 
     <style>
@@ -254,6 +296,7 @@
         #history-box { display: none; padding: 15px; background: #f0f0f0; margin-top: 10px; border-radius: 4px; border: 1px solid #ddd; }
         .hist-item { border-bottom: 1px solid #ccc; padding: 10px 0; }
         .admin-area { display: none; margin-top: 40px; padding: 20px; background: #eef2f3; border-radius: 8px; border: 2px solid #ccc; }
+        /* 增加新的 record-card 樣式以配合 JS 的樣式操作 */
         .record-card, .edit-card { background: white; border: 1px solid #bbb; padding: 15px; margin-bottom: 10px; border-radius: 4px; }
         .sig-wrapper { border: 2px solid var(--muji-charcoal); background: #fff; border-radius: 6px; }
         canvas { width: 100%; height: 350px; touch-action: none; display: block; }
@@ -290,9 +333,9 @@
             <hr>
             <h4>管理歷史功課</h4>
             <div id="admin-history-manage"></div>
-            <h4>家長簽名統計</h4>
+            
+            <h4 style="margin-top:30px;">家長簽名統計與紀錄</h4>
             <div id="stats-area"></div>
-            <h4 style="margin-top:20px;">完整歷史簽名紀錄 (含留言)</h4>
             <div id="records-list"></div>
         </div>
     </div>
