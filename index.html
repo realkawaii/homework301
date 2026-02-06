@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>大吉國中 303 電子聯絡簿</title>
+    <title>大吉國中 303 線上聯絡簿</title>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Firebase 配置 (保留 303 班設定)
+        // --- 303 班專用 Firebase 設定 (您的設定沒問題) ---
         const firebaseConfig = {
             apiKey: "AIzaSyC5PNHdlGqBngfFQw9j48PDOsuUE0Co1yc",
             authDomain: "homework301-6336d.firebaseapp.com",
@@ -25,7 +25,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // 303 班學生名單 (保留)
+        // --- 303 班學生名單 ---
         const students = [
             {id:1, name:"何育駿"}, {id:2, name:"何松澤"}, {id:3, name:"吳承叡"}, 
             {id:4, name:"吳進和"}, {id:5, name:"劉亞嶧"}, {id:6, name:"蔡宗叡"}, 
@@ -44,8 +44,55 @@
             sel.appendChild(opt);
         });
 
+        // --- 簽名視窗邏輯 ---
+        const sigOverlay = document.getElementById('sig-overlay');
         const canvas = document.getElementById('canvas');
         const pad = new SignaturePad(canvas);
+        const previewImg = document.getElementById('sig-preview');
+        let isEraser = false;
+
+        window.openSignature = () => {
+            sigOverlay.style.display = 'flex';
+            resizeCanvas();
+            document.body.style.overflow = 'hidden'; 
+        };
+
+        window.closeSignature = (save) => {
+            if (save && !pad.isEmpty()) {
+                previewImg.src = pad.toDataURL();
+                previewImg.style.display = 'block';
+                document.getElementById('sig-placeholder').style.display = 'none';
+            }
+            sigOverlay.style.display = 'none';
+            document.body.style.overflow = 'auto';
+        };
+
+        window.toggleEraser = () => {
+            isEraser = !isEraser;
+            const btn = document.getElementById('eraser-btn');
+            if (isEraser) {
+                pad.compositeOperation = 'destination-out';
+                btn.style.background = '#ff4444';
+                btn.textContent = '✏️ 切換畫筆';
+            } else {
+                pad.compositeOperation = 'source-over';
+                btn.style.background = '#666';
+                btn.textContent = '🧽 橡皮擦';
+            }
+        };
+
+        window.changeWidth = (val) => {
+            pad.minWidth = parseFloat(val);
+            pad.maxWidth = parseFloat(val) + 2;
+        };
+
+        function resizeCanvas() {
+            const ratio = Math.max(window.devicePixelRatio || 1, 1);
+            canvas.width = canvas.offsetWidth * ratio;
+            canvas.height = canvas.offsetHeight * ratio;
+            canvas.getContext("2d").scale(ratio, ratio);
+            pad.clear();
+        }
 
         function getFormattedDate() {
             const now = new Date();
@@ -53,98 +100,116 @@
             return `${now.toLocaleDateString('zh-TW')} ${days[now.getDay()]}`;
         }
 
-        // --- 核心邏輯：判斷目前應統計的區間 (更新為 204 版本) ---
+        // --- 【已修正】統計時段邏輯 ---
+        // 錯誤修正說明：這裡確保 setTime 之後 start 依然是 Date 物件，而不是數字。
         function getStatisticsRange() {
             const now = new Date();
             const day = now.getDay(); 
             let start = new Date(now);
             let end = new Date(now);
-            const setTime = (d, h) => { d.setHours(h, 0, 0, 0); return d.getTime(); };
+            
+            // 修正點：這裡只設定時間，返回 Date 物件本身，不要返回 .getTime()
+            const setTime = (d, h) => { d.setHours(h, 0, 0, 0); return d; };
 
-            // 判斷是否為週五下午4點到週一中午12點的區間
+            // 週五 16:00 ~ 週一 12:00
             const isWeekendWindow = (day === 5 && now.getHours() >= 16) || (day === 6) || (day === 0) || (day === 1 && now.getHours() < 12);
 
             if (isWeekendWindow) {
-                if (day === 5) start = setTime(start, 16);
-                else if (day === 6) { start.setDate(start.getDate() - 1); start = setTime(start, 16); }
-                else if (day === 0) { start.setDate(start.getDate() - 2); start = setTime(start, 16); }
-                else if (day === 1) { start.setDate(start.getDate() - 3); start = setTime(start, 16); }
+                if (day === 5) {
+                    setTime(start, 16);
+                } else if (day === 6) { 
+                    start.setDate(start.getDate() - 1); 
+                    setTime(start, 16); 
+                } else if (day === 0) { 
+                    start.setDate(start.getDate() - 2); 
+                    setTime(start, 16); 
+                } else if (day === 1) { 
+                    start.setDate(start.getDate() - 3); 
+                    setTime(start, 16); 
+                }
+                
+                // 設定結束時間為開始時間 + 3天 (週五->週一) 的中午12點
                 end = new Date(start); 
-                end.setDate(start.getDate() + 3); // 指向週一
-                end = setTime(end, 12);           // 截止時間週一 12:00
+                end.setDate(start.getDate() + 3); 
+                setTime(end, 12); 
             } else {
-                // 平日時段：下午4點到隔天中午12點
+                // 平日 16:00 ~ 隔日 12:00
                 if (now.getHours() >= 16) { 
-                    start = setTime(start, 16);
+                    setTime(start, 16);
+                    end = new Date(start); // 複製 start
                     end.setDate(end.getDate() + 1); 
-                    end = setTime(end, 12);
+                    setTime(end, 12);
                 } else {
                     start.setDate(start.getDate() - 1); 
-                    start = setTime(start, 16);
-                    end = setTime(new Date(now), 12);
+                    setTime(start, 16);
+                    end = new Date(now);
+                    setTime(end, 12);
                 }
             }
-            return { start, end };
+            
+            // 最後回傳時才轉成數字 (Timestamp)，供後續比對使用
+            return { start: start.getTime(), end: end.getTime() };
         }
 
+        let currentHomeworkContent = "";
+
+        // 讀取今日功課
         onSnapshot(doc(db, "configs", "today_homework"), (docSnap) => {
             if (docSnap.exists()) {
-                document.getElementById('hw-content').innerText = docSnap.data().content;
+                currentHomeworkContent = docSnap.data().content || "";
+                document.getElementById('hw-content').innerText = currentHomeworkContent;
                 document.getElementById('hw-date').innerText = docSnap.data().date || getFormattedDate();
+                
+                const inputArea = document.getElementById('hw-input');
+                if (inputArea && inputArea.value === "") {
+                     inputArea.value = currentHomeworkContent;
+                }
             }
         });
 
-        window.updateHW = async () => {
-            const val = document.getElementById('hw-input').value;
-            if(!val) return alert("請輸入內容");
-            const oldContent = document.getElementById('hw-content').innerText;
-            const oldDate = document.getElementById('hw-date').innerText;
-            try {
-                await addDoc(collection(db, "history_homework"), {
-                    date: oldDate,
-                    content: oldContent,
-                    timestamp: Date.now()
-                });
-                await setDoc(doc(db, "configs", "today_homework"), {
-                    content: val,
-                    date: getFormattedDate()
-                });
-                document.getElementById('hw-input').value = '';
-                alert("黑板已成功更新！");
-            } catch(e) { alert("更新失敗"); }
-        };
-
         window.saveData = async () => {
             const sid = sel.value;
-            if(!sid || pad.isEmpty()) return alert("請選取座號並簽名");
+            if(!sid || previewImg.style.display === 'none') return alert("請選取座號並完成手寫簽名");
             try {
                 await addDoc(collection(db, "signatures"), {
                     sid: sid,
                     name: students.find(s => s.id == sid).name,
                     comment: document.getElementById('comment').value,
-                    sig: pad.toDataURL(),
+                    sig: previewImg.src,
                     time: new Date().toLocaleString('zh-TW'),
                     timestamp: Date.now()
                 });
                 alert("儲存成功！");
                 pad.clear();
+                previewImg.style.display = 'none';
+                document.getElementById('sig-placeholder').style.display = 'block';
                 document.getElementById('comment').value = '';
-            } catch(e) { alert("儲存失敗"); }
+            } catch(e) { 
+                alert("儲存失敗：請檢查網路或權限。\n錯誤訊息：" + e.message); 
+            }
         };
 
-        let isHistoryShow = false;
-        window.toggleHistory = () => {
-            const box = document.getElementById('history-box');
-            isHistoryShow = !isHistoryShow;
-            if (isHistoryShow) {
-                const q = query(collection(db, "history_homework"), orderBy("timestamp", "desc"));
-                onSnapshot(q, (snapshot) => {
-                    box.innerHTML = snapshot.docs.map(d => `<div class="hist-item"><b>${d.data().date}</b><br>${d.data().content}</div>`).join('');
+        window.updateHW = async () => {
+            const val = document.getElementById('hw-input').value;
+            if(!val) return alert("請輸入內容");
+            const currentBoardDate = document.getElementById('hw-date').innerText;
+            const currentBoardContent = document.getElementById('hw-content').innerText;
+            const newDate = getFormattedDate();
+
+            try {
+                if (currentBoardDate !== newDate && currentBoardDate !== "載入中...") {
+                    await addDoc(collection(db, "history_homework"), {
+                        date: currentBoardDate,
+                        content: currentBoardContent,
+                        timestamp: Date.now()
+                    });
+                }
+                await setDoc(doc(db, "configs", "today_homework"), {
+                    content: val,
+                    date: newDate
                 });
-                box.style.display = 'block';
-            } else {
-                box.style.display = 'none';
-            }
+                alert("功課已更新！");
+            } catch(e) { alert("更新失敗：" + e.message); }
         };
 
         window.loginAdmin = () => {
@@ -155,84 +220,139 @@
             if (pw === "2211") {
                 adminPanel.style.display = 'block';
                 teacherExtra.style.display = 'block';
-                initAdminListeners();
+                document.getElementById('hw-input').value = currentHomeworkContent;
+                setTimeout(initAdminListeners, 500); 
                 adminPanel.scrollIntoView({ behavior: 'smooth' });
             } else if (pw === "12321") {
                 adminPanel.style.display = 'block';
-                teacherExtra.style.display = 'none';
+                teacherExtra.style.display = 'none'; 
+                document.getElementById('hw-input').value = currentHomeworkContent;
                 adminPanel.scrollIntoView({ behavior: 'smooth' });
             } else {
                 alert("密碼錯誤！");
             }
         };
 
-        // --- 管理者監聽功能 (更新為 204 版本) ---
+        // --- 資料讀取邏輯 ---
         function initAdminListeners() {
-            onSnapshot(query(collection(db, "history_homework"), orderBy("timestamp", "desc")), (snap) => {
-                document.getElementById('admin-history-manage').innerHTML = snap.docs.map(d => `
-                    <div class="edit-card">
-                        <small>${d.data().date}</small>
-                        <textarea id="edit-${d.id}" style="width:100%; margin:5px 0;">${d.data().content}</textarea>
-                        <button onclick="window.saveEditHW('${d.id}')">儲存修改</button>
-                        <button onclick="window.deleteHW('${d.id}')" style="color:red;">刪除</button>
-                    </div>
-                `).join('');
+            console.log("開始讀取管理資料...");
+            const statsArea = document.getElementById('stats-area');
+            const recordsList = document.getElementById('records-list');
+            const historyArea = document.getElementById('admin-history-manage');
+
+            statsArea.innerHTML = '<div style="color:blue;">正在連線至資料庫...</div>';
+            recordsList.innerHTML = '<div style="color:blue;">正在讀取紀錄...</div>';
+
+            // 1. 歷史功課讀取
+            onSnapshot(collection(db, "history_homework"), (snap) => {
+                const docs = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                docs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                
+                if(docs.length === 0) {
+                     historyArea.innerHTML = "無歷史紀錄";
+                } else {
+                    historyArea.innerHTML = docs.map(d => `
+                        <div class="edit-card">
+                            <small>${d.date}</small>
+                            <textarea id="edit-${d.id}" style="width:100%; margin:5px 0;">${d.content}</textarea>
+                            <button onclick="window.saveEditHW('${d.id}')">儲存修改</button>
+                            <button onclick="window.deleteHW('${d.id}')" style="color:red;">刪除</button>
+                        </div>
+                    `).join('');
+                }
+            }, (error) => {
+                console.error("歷史功課讀取失敗:", error);
+                historyArea.innerHTML = `<div style="color:red;">讀取失敗：${error.message}</div>`;
             });
 
-            onSnapshot(query(collection(db, "signatures"), orderBy("timestamp", "desc")), (snap) => {
-                const range = getStatisticsRange();
-                const allData = snap.docs.map(d => ({id: d.id, ...d.data()}));
-                
-                // 1. 統計區域：嚴格過濾時段
-                const statsRecords = allData.filter(r => r.timestamp >= range.start && r.timestamp < range.end);
-                const signedIds = statsRecords.map(r => parseInt(r.sid));
-                const unsigned = students.filter(s => !signedIds.includes(s.id));
+            // 2. 簽名紀錄讀取
+            onSnapshot(collection(db, "signatures"), (snap) => {
+                try {
+                    // 過濾無效資料
+                    let allData = [];
+                    snap.docs.forEach(d => {
+                        const data = d.data();
+                        if (data && data.timestamp) {
+                            allData.push({ id: d.id, ...data });
+                        }
+                    });
 
-                document.getElementById('stats-area').innerHTML = `
-                    <div style="background:#e3f2fd; padding:15px; border-radius:8px; margin-bottom:15px; border-left:5px solid #2196F3;">
-                        <b style="color:#1565C0;">📊 統計時段：</b><br>
-                        ${new Date(range.start).toLocaleString()} ~ ${new Date(range.end).toLocaleString()}
-                    </div>
-                    <div style="background:#fff1f1; padding:15px; border-radius:8px; border-left:5px solid #f44336;">
-                        <b style="color:#c62828;">❌ 本時段未簽名 (${unsigned.length}人)：</b><br>
-                        <p style="margin-top:8px; font-size:1.1em;">${unsigned.length > 0 ? unsigned.map(s => s.name).join('、') : '✨ 全班已簽名'}</p>
-                    </div>`;
+                    // 前端排序
+                    allData.sort((a, b) => b.timestamp - a.timestamp);
 
-                // 2. 批量刪除控制區
-                const batchControlHTML = `
-                    <div style="margin-bottom: 10px; padding: 10px; background: #eee; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
-                        <label style="cursor:pointer; display:flex; align-items:center; gap:5px; margin:0;">
-                            <input type="checkbox" id="selectAllSigs" onchange="window.toggleAllSigs(this)" style="transform: scale(1.3);"> 
-                            全選
-                        </label>
-                        <button onclick="window.deleteSelectedSigs()" style="background: #d32f2f; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">🗑️ 刪除選取項目</button>
-                    </div>
-                `;
-
-                // 3. 顯示清單
-                const listHTML = allData.map(d => {
-                    const isOutside = (d.timestamp < range.start || d.timestamp >= range.end);
-                    return `
-                    <div class="record-card" style="${isOutside ? 'opacity:0.6; border-style:dashed; background:#fafafa;' : 'border-left:4px solid #4caf50;'}">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <b>${d.sid}. ${d.name}</b>
-                            <input type="checkbox" class="sig-checkbox" value="${d.id}" style="transform: scale(1.5); cursor: pointer;">
+                    // --- 渲染清單 ---
+                    const range = getStatisticsRange(); // 這裡現在應該不會報錯了
+                    
+                    const batchControlHTML = `
+                        <div style="margin-bottom: 10px; padding: 10px; background: #eee; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                            <label style="cursor:pointer; display:flex; align-items:center; gap:5px; margin:0;">
+                                <input type="checkbox" id="selectAllSigs" onchange="window.toggleAllSigs(this)" style="transform: scale(1.3);"> 
+                                全選
+                            </label>
+                            <button onclick="window.deleteSelectedSigs()" style="background: #d32f2f; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">🗑️ 刪除選取項目</button>
                         </div>
-                        ${isOutside ? '<span style="color:#999; font-size:0.8em;">[非本次統計]</span><br>' : ''}
-                        <small style="color:#888;">${d.time}</small><br>
-                        <div style="margin:5px 0; color:#444;">留言：${d.comment || '無'}</div>
-                        <img src="${d.sig}" style="width:100%; border:1px solid #eee; background:#fff; margin-top:5px;">
-                        <div style="text-align:right; margin-top:5px;">
-                            <button onclick="window.deleteSig('${d.id}')" style="color:#666; background:none; border:none; cursor:pointer; font-size:12px; text-decoration:underline;">個別刪除</button>
-                        </div>
-                    </div>`;
-                }).join('');
+                    `;
 
-                document.getElementById('records-list').innerHTML = batchControlHTML + listHTML;
+                    if (allData.length === 0) {
+                        recordsList.innerHTML = `<div style="text-align:center; padding:20px; color:#888;">資料庫目前是空的</div>`;
+                    } else {
+                        const listHTML = allData.map(d => {
+                            const isOutside = (d.timestamp < range.start || d.timestamp >= range.end);
+                            return `
+                            <div class="record-card" style="${isOutside ? 'opacity:0.6; border-style:dashed; background:#fafafa;' : 'border-left:4px solid #4caf50;'}">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <b>${d.sid}. ${d.name}</b>
+                                    <input type="checkbox" class="sig-checkbox" value="${d.id}" style="transform: scale(1.5); cursor: pointer;">
+                                </div>
+                                ${isOutside ? '<span style="color:#999; font-size:0.8em;">[非本次統計]</span><br>' : ''}
+                                <small style="color:#888;">${d.time}</small><br>
+                                <div style="margin:5px 0; color:#444;">留言：${d.comment || '無'}</div>
+                                <img src="${d.sig}" style="width:100%; border:1px solid #eee; background:#fff; margin-top:5px;">
+                                <div style="text-align:right; margin-top:5px;">
+                                    <button onclick="window.deleteSig('${d.id}')" style="color:#666; background:none; border:none; cursor:pointer; font-size:12px; text-decoration:underline;">個別刪除</button>
+                                </div>
+                            </div>`;
+                        }).join('');
+                        recordsList.innerHTML = batchControlHTML + listHTML;
+                    }
+
+                    // --- 計算統計 ---
+                    try {
+                        const statsRecords = allData.filter(r => r.timestamp >= range.start && r.timestamp < range.end);
+                        const signedIds = statsRecords.map(r => parseInt(r.sid));
+                        const unsigned = students.filter(s => !signedIds.includes(s.id));
+
+                        statsArea.innerHTML = `
+                            <div style="background:#e3f2fd; padding:15px; border-radius:8px; margin-bottom:15px; border-left:5px solid #2196F3;">
+                                <b style="color:#1565C0;">📊 統計時段：</b><br>
+                                ${new Date(range.start).toLocaleString()} ~ ${new Date(range.end).toLocaleString()}
+                            </div>
+                            <div style="background:#fff1f1; padding:15px; border-radius:8px; border-left:5px solid #f44336;">
+                                <b style="color:#c62828;">❌ 本時段未簽名 (${unsigned.length}人)：</b><br>
+                                <p style="margin-top:8px; font-size:1.1em;">${unsigned.length > 0 ? unsigned.map(s => s.name).join('、') : '✨ 全班已簽名'}</p>
+                            </div>`;
+                    } catch (statError) {
+                        console.error("統計計算錯誤:", statError);
+                        statsArea.innerHTML = `<div style="color:orange;">統計計算異常：${statError.message}</div>`;
+                    }
+
+                } catch (e) {
+                    console.error("資料處理嚴重錯誤:", e);
+                    statsArea.innerHTML = `<div style="color:red;">資料處理錯誤：${e.message}</div>`;
+                    recordsList.innerHTML = "無法顯示列表，請檢查控制台 (Console) 錯誤訊息";
+                }
+            }, (error) => {
+                console.error("簽名紀錄讀取失敗:", error);
+                recordsList.innerHTML = `<div style="color:red; padding:10px; border:1px solid red; background:#fff0f0;">
+                    <b>讀取失敗！</b><br>
+                    原因：${error.code}<br>
+                    訊息：${error.message}<br><br>
+                    提示：請檢查 Firebase Console > Firestore Database > Rules (規則)。
+                </div>`;
+                statsArea.innerHTML = "";
             });
         }
 
-        // --- 批量操作功能 ---
         window.toggleAllSigs = (source) => {
             const checkboxes = document.querySelectorAll('.sig-checkbox');
             checkboxes.forEach(cb => cb.checked = source.checked);
@@ -245,15 +365,12 @@
             if (!confirm(`⚠️ 確定要永久刪除選取的 ${checkedBoxes.length} 筆簽名嗎？\n此動作無法復原！`)) return;
 
             try {
-                // 使用 Promise.all 平行刪除
                 const deletePromises = Array.from(checkedBoxes).map(cb => deleteDoc(doc(db, "signatures", cb.value)));
                 await Promise.all(deletePromises);
                 alert("刪除成功！");
                 const selectAllBox = document.getElementById('selectAllSigs');
                 if(selectAllBox) selectAllBox.checked = false;
-            } catch (e) {
-                alert("刪除失敗：" + e.message);
-            }
+            } catch (e) { alert("刪除失敗：" + e.message); }
         };
 
         window.saveEditHW = async (id) => {
@@ -262,22 +379,27 @@
             alert("已修正");
         };
         window.deleteHW = async (id) => {
-            if(confirm("確定刪除？")) await deleteDoc(doc(db, "history_homework", id));
+            if(confirm("確定刪除功課歷史？")) await deleteDoc(doc(db, "history_homework", id));
         };
         window.deleteSig = async (id) => {
-            if(confirm("確定刪除簽名？")) await deleteDoc(doc(db, "signatures", id));
+            if(confirm("確定永久刪除此簽名紀錄？")) await deleteDoc(doc(db, "signatures", id));
+        };
+        
+        window.toggleHistory = () => {
+            const box = document.getElementById('history-box');
+            if (box.style.display === 'block') {
+                box.style.display = 'none';
+            } else {
+                onSnapshot(collection(db, "history_homework"), (snap) => {
+                    const docs = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                    docs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                    box.innerHTML = docs.map(d => `<div class="hist-item"><b>${d.date}</b><br>${d.content}</div>`).join('');
+                });
+                box.style.display = 'block';
+            }
         };
 
-        function resizeCanvas() {
-            const ratio = Math.max(window.devicePixelRatio || 1, 1);
-            canvas.width = canvas.offsetWidth * ratio;
-            canvas.height = canvas.offsetHeight * ratio;
-            canvas.getContext("2d").scale(ratio, ratio);
-            pad.clear();
-        }
         window.onresize = resizeCanvas;
-        // 延遲執行以確保容器渲染
-        setTimeout(resizeCanvas, 500);
     </script>
 
     <style>
@@ -296,10 +418,17 @@
         #history-box { display: none; padding: 15px; background: #f0f0f0; margin-top: 10px; border-radius: 4px; border: 1px solid #ddd; }
         .hist-item { border-bottom: 1px solid #ccc; padding: 10px 0; }
         .admin-area { display: none; margin-top: 40px; padding: 20px; background: #eef2f3; border-radius: 8px; border: 2px solid #ccc; }
-        /* 增加新的 record-card 樣式以配合 JS 的樣式操作 */
         .record-card, .edit-card { background: white; border: 1px solid #bbb; padding: 15px; margin-bottom: 10px; border-radius: 4px; }
-        .sig-wrapper { border: 2px solid var(--muji-charcoal); background: #fff; border-radius: 6px; }
-        canvas { width: 100%; height: 350px; touch-action: none; display: block; }
+        
+        /* 簽名板樣式 (移植自 204) */
+        .sig-preview-box { border: 2px dashed #bbb; background: #fafafa; border-radius: 6px; min-height: 120px; display: flex; align-items: center; justify-content: center; cursor: pointer; margin-top: 10px; overflow: hidden; }
+        .sig-preview-box img { max-height: 150px; }
+        #sig-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 1000; display: none; flex-direction: column; }
+        .sig-header { padding: 15px; background: #f2f0eb; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; }
+        .sig-controls { padding: 10px; background: #eee; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
+        .sig-canvas-wrap { flex: 1; position: relative; background: #fff; cursor: crosshair; }
+        canvas { width: 100%; height: 100%; touch-action: none; display: block; }
+        .control-btn { padding: 8px 15px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -308,22 +437,46 @@
         <span class="school-info">大吉國中 三年三班</span>
         <span class="main-title">電子聯絡簿</span>
     </div>
+
     <div class="blackboard">
         <div class="bb-title">今日功課</div>
         <div class="bb-date" id="hw-date">載入中...</div>
         <div id="hw-content" class="homework-content">載入中...</div>
     </div>
-    <button class="btn btn-history" onclick="toggleHistory()">📂 查看之前功課 (展開/收起)</button>
+
+    <button class="btn btn-history" onclick="toggleHistory()">📂 查看歷史功課 (展開/收起)</button>
     <div id="history-box"></div>
-    <div style="font-size: 1.3em; font-weight: 700; border-left: 6px solid #333; padding-left: 12px; margin: 25px 0 15px 0;">家長簽名</div>
-    <div style="margin-bottom:20px;"><label style="font-weight:700;">1. 選擇學生</label><select id="student-sel" style="width:100%; padding:14px; font-size:18px;"><option value="">請點擊選擇座號姓名</option></select></div>
-    <div style="margin-bottom:20px;"><label style="font-weight:700;">2. 想對老師說的話</label><textarea id="comment" rows="2" style="width:100%; padding:14px; font-size:18px;"></textarea></div>
-    <div style="margin-bottom:20px;"><label style="font-weight:700;">3. 家長簽名</label><div class="sig-wrapper"><canvas id="canvas"></canvas></div><button onclick="pad.clear()" style="width:100%; padding:10px; background:none; border:none; text-decoration:underline; color:#666; cursor:pointer;">清除重簽</button></div>
+
+    <hr style="margin: 30px 0; border: 0; border-top: 2px solid #eee;">
+
+    <h3 style="border-left: 6px solid #333; padding-left: 12px;">家長簽名區域</h3>
+
+    <div style="margin-bottom:20px;">
+        <label style="font-weight:700;">1. 選擇學生</label>
+        <select id="student-sel" style="width:100%; padding:14px; font-size:18px;">
+            <option value="">請點擊選擇座號姓名</option>
+        </select>
+    </div>
+
+    <div style="margin-bottom:20px;">
+        <label style="font-weight:700;">2. 想對老師說的話</label>
+        <textarea id="comment" rows="2" style="width:100%; padding:14px; font-size:18px;"></textarea>
+    </div>
+
+    <div style="margin-bottom:20px;">
+        <label style="font-weight:700;">3. 家長簽名 (點擊開啟)</label>
+        <div class="sig-preview-box" onclick="openSignature()">
+            <span id="sig-placeholder" style="color: #888;">點擊此處開啟簽名畫面</span>
+            <img id="sig-preview" src="" style="display: none;">
+        </div>
+    </div>
+
     <button class="btn" onclick="saveData()">確認儲存並送出</button>
 
     <button onclick="loginAdmin()" style="margin-top:100px; opacity:0.1; background:none; border:none; width:100%;">管理</button>
+
     <div id="admin-panel" class="admin-area">
-        <h3>管理後台</h3>
+        <h3 style="text-align:center;">管理後台</h3>
         <div style="margin-bottom:20px;">
             <label>發布新功課</label>
             <textarea id="hw-input" rows="3" style="width:100%; padding:10px;"></textarea>
@@ -331,14 +484,40 @@
         </div>
         <div id="teacher-extra">
             <hr>
+            <h4>家長簽名統計</h4>
+            <div id="stats-area"></div>
+            
+            <h4 style="margin-top:20px;">完整歷史簽名紀錄</h4>
+            <div id="records-list"></div>
+
+            <hr style="margin:20px 0;">
             <h4>管理歷史功課</h4>
             <div id="admin-history-manage"></div>
-            
-            <h4 style="margin-top:30px;">家長簽名統計與紀錄</h4>
-            <div id="stats-area"></div>
-            <div id="records-list"></div>
         </div>
     </div>
 </div>
+
+<div id="sig-overlay">
+    <div class="sig-header">
+        <button onclick="closeSignature(false)" style="background: #ccc; border:none; padding:10px; border-radius:5px;">取消</button>
+        <strong style="font-size: 1.2em;">家長簽名畫面</strong>
+        <button onclick="closeSignature(true)" style="background: #333; color:white; border:none; padding:10px 20px; border-radius:5px;">完成</button>
+    </div>
+    <div class="sig-controls">
+        <div style="display:flex; align-items:center; gap:5px;">
+            <small>粗細:</small>
+            <input type="range" min="1" max="10" value="3" oninput="changeWidth(this.value)">
+        </div>
+        <button id="eraser-btn" class="control-btn" style="background: #666;" onclick="toggleEraser()">🧽 橡皮擦</button>
+        <button class="control-btn" style="background: #888;" onclick="pad.clear()">🗑️ 全部清除</button>
+    </div>
+    <div class="sig-canvas-wrap">
+        <canvas id="canvas"></canvas>
+    </div>
+    <div style="padding: 10px; text-align: center; color: #666; font-size: 0.9em; background: #f9f9f9;">
+        請在空白處書寫姓名
+    </div>
+</div>
+
 </body>
 </html>
